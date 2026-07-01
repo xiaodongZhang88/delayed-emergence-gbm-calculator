@@ -1,0 +1,13 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.env
+.streamlit/secrets.toml
+
+# Keep only explicit model files you intend to deploy.
+# If the final model is large or sensitive, do not commit it publicly.
+models/*.tmp
+data/*.tmp
