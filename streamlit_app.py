@@ -232,7 +232,6 @@ def optional_imports() -> dict[str, Any]:
     return modules
 
 
-@st.cache_resource(show_spinner=False)
 def load_model_from_disk() -> tuple[Any | None, str | None]:
     for path in MODEL_PATHS:
         if path.exists():
