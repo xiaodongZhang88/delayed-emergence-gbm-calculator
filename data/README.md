@@ -1,12 +1,14 @@
-# SHAP Background Data Placeholder
+# SHAP Background Data
 
-如需显示稳定的 SHAP waterfall/force plot，请放入：
+当前部署包含：
 
 ```text
 background.csv
 ```
 
-要求：
+该文件仅包含模型 7 个变量的中位数基线行，用于 SHAP 解释的背景参考；它不是原始病例数据。
+
+如果后续需要更稳定的 SHAP 图，可替换为匿名化的代表性背景数据。要求：
 
 - 包含模型使用的 7 个变量。
 - 列名与模型训练时一致。

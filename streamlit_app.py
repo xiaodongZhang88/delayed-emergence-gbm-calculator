@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import gzip
 import io
+import json
 import pickle
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +16,8 @@ import streamlit.components.v1 as components
 
 APP_DIR = Path(__file__).resolve().parent
 MODEL_PATHS = [
+    APP_DIR / "models" / "final_gbm_model.json.gz",
+    APP_DIR / "models" / "final_gbm_model.json",
     APP_DIR / "models" / "final_gbm_model.joblib",
     APP_DIR / "models" / "final_gbm_model.pkl",
     APP_DIR / "models" / "final_gbm_model.pickle",
@@ -55,6 +59,86 @@ FEATURE_ALIASES = {
     "alt": {"alt", "ALT", "Alanine aminotransferase"},
     "urea": {"urea", "Urea", "BUN", "bun"},
 }
+
+
+class RJsonGBM:
+    """Minimal predictor for JSON exports from R package gbm."""
+
+    def __init__(self, payload: dict[str, Any]):
+        if payload.get("format") != "r-gbm-json-v1":
+            raise ValueError("不支持的 R GBM JSON 格式。")
+
+        self.payload = payload
+        self.initF = float(payload["initF"])
+        self.var_names = [str(item) for item in payload["var_names"]]
+        self.feature_names_in_ = np.array(self.var_names, dtype=object)
+        self.n_features_in_ = len(self.var_names)
+        self.classes_ = np.array([0, 1])
+        self.trees = payload["trees"]
+        self.n_trees = int(payload.get("n_trees", len(self.trees)))
+        self.source = payload.get("source", "R gbm JSON")
+        self.training_summary = payload.get("training_summary", {})
+
+    def _as_matrix(self, x: Any) -> np.ndarray:
+        if isinstance(x, pd.DataFrame):
+            missing = [name for name in self.var_names if name not in x.columns]
+            if missing:
+                raise ValueError(f"模型输入缺少变量：{', '.join(missing)}")
+            return x.loc[:, self.var_names].to_numpy(dtype=float)
+
+        arr = np.asarray(x, dtype=float)
+        if arr.ndim == 1:
+            arr = arr.reshape(1, -1)
+        if arr.shape[1] != self.n_features_in_:
+            raise ValueError(f"模型需要 {self.n_features_in_} 个变量，但收到 {arr.shape[1]} 个。")
+        return arr
+
+    @staticmethod
+    def _sigmoid(score: np.ndarray) -> np.ndarray:
+        return 1.0 / (1.0 + np.exp(-score))
+
+    def decision_function(self, x: Any) -> np.ndarray:
+        rows = self._as_matrix(x)
+        scores = np.full(rows.shape[0], self.initF, dtype=float)
+
+        for row_index, row in enumerate(rows):
+            score = self.initF
+            for tree in self.trees:
+                node = 0
+                split_var = tree["split_var"]
+                split_code = tree["split_code"]
+                left = tree["left"]
+                right = tree["right"]
+                missing = tree["missing"]
+                prediction = tree["prediction"]
+
+                while int(split_var[node]) != -1:
+                    value = row[int(split_var[node])]
+                    if np.isnan(value):
+                        node = int(missing[node])
+                    elif value < float(split_code[node]):
+                        node = int(left[node])
+                    else:
+                        node = int(right[node])
+                score += float(prediction[node])
+            scores[row_index] = score
+
+        return scores
+
+    def predict_proba(self, x: Any) -> np.ndarray:
+        probability = self._sigmoid(self.decision_function(x))
+        return np.column_stack([1.0 - probability, probability])
+
+    def predict(self, x: Any) -> np.ndarray:
+        return self.predict_proba(x)[:, 1]
+
+    def metadata_summary(self) -> str:
+        n = self.training_summary.get("n")
+        positive = self.training_summary.get("outcome_positive")
+        negative = self.training_summary.get("outcome_negative")
+        if n is None:
+            return self.source
+        return f"{self.source}; training n={n}, DL1=1: {positive}, DL1=0: {negative}"
 
 
 def page_style() -> None:
@@ -157,6 +241,14 @@ def load_model_from_disk() -> tuple[Any | None, str | None]:
 
 
 def load_model_bytes(raw: bytes, filename: str) -> Any:
+    lowered = filename.lower()
+    if lowered.endswith(".json.gz"):
+        payload = json.loads(gzip.decompress(raw).decode("utf-8"))
+        return RJsonGBM(payload)
+    if lowered.endswith(".json"):
+        payload = json.loads(raw.decode("utf-8"))
+        return RJsonGBM(payload)
+
     suffix = Path(filename).suffix.lower()
     modules = optional_imports()
     if suffix == ".joblib":
@@ -166,7 +258,7 @@ def load_model_bytes(raw: bytes, filename: str) -> Any:
         return joblib.load(io.BytesIO(raw))
     if suffix in {".pkl", ".pickle"}:
         return pickle.loads(raw)
-    raise RuntimeError("仅支持 .joblib、.pkl 或 .pickle 模型文件。")
+    raise RuntimeError("仅支持 .json.gz、.json、.joblib、.pkl 或 .pickle 模型文件。")
 
 
 @st.cache_data(show_spinner=False)
@@ -260,11 +352,24 @@ def make_shap_explanation(model: Any, x: pd.DataFrame):
         if len(background) > 200:
             background = background.sample(200, random_state=2026)
 
-    if background is not None and not background.empty:
+    if background is None or background.empty:
+        background = x.copy()
+
+    def positive_probability(data: Any) -> np.ndarray:
+        if isinstance(data, pd.DataFrame):
+            frame = data.reindex(columns=x.columns)
+        else:
+            frame = pd.DataFrame(np.asarray(data), columns=x.columns)
+        if hasattr(model, "predict_proba"):
+            return np.asarray(model.predict_proba(frame))[:, 1]
+        return np.asarray(model.predict(frame)).ravel()
+
+    try:
         explainer = shap.Explainer(model, background)
-    else:
-        explainer = shap.Explainer(model)
-    shap_values = explainer(x)
+        shap_values = explainer(x)
+    except Exception:
+        explainer = shap.Explainer(positive_probability, background)
+        shap_values = explainer(x)
     return normalize_shap_explanation(shap_values, x)
 
 
@@ -361,18 +466,23 @@ def model_status_box(model: Any | None, source: str | None) -> None:
         st.markdown(
             """
             <div class="status-bad">
-            未检测到最终 GBM 模型。请把模型放到 <code>models/final_gbm_model.joblib</code>
-            或 <code>models/final_gbm_model.pkl</code>，然后重新运行。
+            未检测到最终 GBM 模型。请把模型放到 <code>models/final_gbm_model.json.gz</code>、
+            <code>models/final_gbm_model.joblib</code> 或 <code>models/final_gbm_model.pkl</code>，
+            然后重新运行。
             </div>
             """,
             unsafe_allow_html=True,
         )
         return
 
+    details = ""
+    if hasattr(model, "metadata_summary"):
+        details = f"<br><span style='font-weight: 500;'>{model.metadata_summary()}</span>"
+
     st.markdown(
         f"""
         <div class="status-ok">
-        已加载模型：<code>{source or "uploaded model"}</code>
+        已加载模型：<code>{source or "uploaded model"}</code>{details}
         </div>
         """,
         unsafe_allow_html=True,
@@ -382,7 +492,7 @@ def model_status_box(model: Any | None, source: str | None) -> None:
 def sidebar_model_upload() -> tuple[Any | None, str | None]:
     st.sidebar.header("模型接入")
     st.sidebar.caption("正式部署时建议把模型文件放入 models/ 目录。临时测试可在这里上传。")
-    uploaded = st.sidebar.file_uploader("上传可信模型文件", type=["joblib", "pkl", "pickle"])
+    uploaded = st.sidebar.file_uploader("上传可信模型文件", type=["gz", "json", "joblib", "pkl", "pickle"])
     if uploaded is None:
         return load_model_from_disk()
     try:
@@ -397,9 +507,10 @@ def render_model_contract() -> None:
         st.markdown(
             """
             - 模型应为二分类 GBM/树模型，并支持 `predict_proba(X)`。
+            - R `gbm` 模型可导出为 `models/final_gbm_model.json.gz` 后部署。
             - 输入变量建议使用这些列名：`age`, `gnri`, `be`, `wbc`, `rbc`, `alt`, `urea`。
             - 若要显示稳定的 SHAP 图，建议提供训练集背景数据：`data/background.csv`，列名与模型一致。
-            - 如果模型来自 R 的 `gbm` 包，不能被 Python 直接读取；需要导出为 Python 可读取格式，或用 Python 重新训练/封装。
+            - 当前部署使用从 `model.rds` 重建并导出的 R GBM JSON 模型，不上传原始病例数据。
             """
         )
 
@@ -488,12 +599,13 @@ def main() -> None:
                     for spec in FEATURES
                 ]
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
         st.subheader("个体化 SHAP 解释")
-        render_shap(model, x)
+        with st.spinner("正在生成 SHAP 个体化解释..."):
+            render_shap(model, x)
 
 
 if __name__ == "__main__":
