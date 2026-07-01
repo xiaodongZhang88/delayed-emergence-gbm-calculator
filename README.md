@@ -2,6 +2,11 @@
 
 这是基于论文最终 GBM 模型设计的 Streamlit 网页计算器版本。它参考 AKI 文献的实现路线：输入模型变量，输出风险概率，并在模型和 SHAP 环境可用时显示个体化 SHAP waterfall/force plot。
 
+## 已部署网址
+
+- Streamlit 公网应用：https://delayed-emergence-gbm-calculator.streamlit.app/
+- GitHub 仓库：https://github.com/xiaodongZhang88/delayed-emergence-gbm-calculator
+
 ## 目录结构
 
 ```text
