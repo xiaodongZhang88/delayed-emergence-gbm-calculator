@@ -29,7 +29,7 @@ BACKGROUND_PATH = APP_DIR / "data" / "background.csv"
 class FeatureSpec:
     key: str
     label: str
-    zh: str
+    description: str
     unit: str
     min_value: float
     max_value: float
@@ -39,13 +39,43 @@ class FeatureSpec:
 
 
 FEATURES = [
-    FeatureSpec("age", "Age", "年龄", "years", 18, 100, 62, 1, "论文总体队列中位数 62 岁。"),
-    FeatureSpec("gnri", "GNRI", "老年营养风险指数", "score", 60, 130, 102.90, 0.1, "论文总体队列中位数 102.90。"),
-    FeatureSpec("be", "Base excess", "碱剩余", "mmol/L", -20, 20, 0.81, 0.1, "论文总体队列均值 0.81。"),
-    FeatureSpec("wbc", "WBC count", "白细胞计数", "×10⁹/L", 0.5, 50, 5.50, 0.01, "论文总体队列中位数 5.50。"),
-    FeatureSpec("rbc", "RBC count", "红细胞计数", "×10¹²/L", 1, 8, 4.46, 0.01, "论文总体队列均值 4.46。"),
-    FeatureSpec("alt", "ALT", "丙氨酸氨基转移酶 / 谷丙转氨酶", "U/L", 1, 1000, 14, 1, "论文总体队列中位数 14。"),
-    FeatureSpec("urea", "Urea", "尿素", "mmol/L", 1, 50, 5.15, 0.01, "论文总体队列中位数 5.15。"),
+    FeatureSpec("age", "Age", "Patient age", "years", 18, 100, 62, 1, "Median in the study cohort: 62 years."),
+    FeatureSpec(
+        "gnri",
+        "GNRI",
+        "Geriatric Nutritional Risk Index",
+        "score",
+        60,
+        130,
+        102.90,
+        0.1,
+        "Median in the study cohort: 102.90.",
+    ),
+    FeatureSpec("be", "Base excess", "Base excess", "mmol/L", -20, 20, 0.81, 0.1, "Mean in the study cohort: 0.81 mmol/L."),
+    FeatureSpec(
+        "wbc",
+        "WBC count",
+        "White blood cell count",
+        "10^9/L",
+        0.5,
+        50,
+        5.50,
+        0.01,
+        "Median in the study cohort: 5.50 10^9/L.",
+    ),
+    FeatureSpec(
+        "rbc",
+        "RBC count",
+        "Red blood cell count",
+        "10^12/L",
+        1,
+        8,
+        4.46,
+        0.01,
+        "Mean in the study cohort: 4.46 10^12/L.",
+    ),
+    FeatureSpec("alt", "ALT", "Alanine aminotransferase", "U/L", 1, 1000, 14, 1, "Median in the study cohort: 14 U/L."),
+    FeatureSpec("urea", "Urea", "Urea", "mmol/L", 1, 50, 5.15, 0.01, "Median in the study cohort: 5.15 mmol/L."),
 ]
 
 FEATURE_KEYS = [item.key for item in FEATURES]
@@ -66,7 +96,7 @@ class RJsonGBM:
 
     def __init__(self, payload: dict[str, Any]):
         if payload.get("format") != "r-gbm-json-v1":
-            raise ValueError("不支持的 R GBM JSON 格式。")
+            raise ValueError("Unsupported R GBM JSON format.")
 
         self.payload = payload
         self.initF = float(payload["initF"])
@@ -83,14 +113,14 @@ class RJsonGBM:
         if isinstance(x, pd.DataFrame):
             missing = [name for name in self.var_names if name not in x.columns]
             if missing:
-                raise ValueError(f"模型输入缺少变量：{', '.join(missing)}")
+                raise ValueError(f"Model input is missing required variables: {', '.join(missing)}")
             return x.loc[:, self.var_names].to_numpy(dtype=float)
 
         arr = np.asarray(x, dtype=float)
         if arr.ndim == 1:
             arr = arr.reshape(1, -1)
         if arr.shape[1] != self.n_features_in_:
-            raise ValueError(f"模型需要 {self.n_features_in_} 个变量，但收到 {arr.shape[1]} 个。")
+            raise ValueError(f"Model requires {self.n_features_in_} variables, but received {arr.shape[1]}.")
         return arr
 
     @staticmethod
@@ -253,11 +283,11 @@ def load_model_bytes(raw: bytes, filename: str) -> Any:
     if suffix == ".joblib":
         joblib = modules.get("joblib")
         if joblib is None:
-            raise RuntimeError("当前环境缺少 joblib，无法读取 .joblib 模型。")
+            raise RuntimeError("joblib is not available in the current environment, so the .joblib model cannot be loaded.")
         return joblib.load(io.BytesIO(raw))
     if suffix in {".pkl", ".pickle"}:
         return pickle.loads(raw)
-    raise RuntimeError("仅支持 .json.gz、.json、.joblib、.pkl 或 .pickle 模型文件。")
+    raise RuntimeError("Only .json.gz, .json, .joblib, .pkl, and .pickle model files are supported.")
 
 
 @st.cache_data(show_spinner=False)
@@ -303,9 +333,9 @@ def make_feature_frame(values: dict[str, float], model: Any | None = None) -> pd
 
     if unresolved:
         raise RuntimeError(
-            "模型需要的变量名无法和网页输入匹配："
+            "The model feature names cannot be matched to the web inputs: "
             + ", ".join(unresolved)
-            + "。请把模型变量名改为 age, gnri, be, wbc, rbc, alt, urea，或在 FEATURE_ALIASES 中添加别名。"
+            + ". Rename the model variables to age, gnri, be, wbc, rbc, alt, urea, or add aliases in FEATURE_ALIASES."
         )
     return pd.DataFrame([row], columns=columns)
 
@@ -327,22 +357,22 @@ def predict_probability(model: Any, x: pd.DataFrame) -> float:
         if 0 <= pred <= 1:
             return pred
 
-    raise RuntimeError("无法从模型获得概率。请提供支持 predict_proba 的二分类 GBM 模型。")
+    raise RuntimeError("Unable to obtain a probability from the model. Please provide a binary GBM model that supports predict_proba.")
 
 
 def classify_risk(probability: float, medium: float, high: float) -> tuple[str, str]:
     if probability >= high:
-        return "高风险", "#b42318"
+        return "High risk", "#b42318"
     if probability >= medium:
-        return "中风险", "#b7791f"
-    return "低风险", "#0f766e"
+        return "Intermediate risk", "#b7791f"
+    return "Low risk", "#0f766e"
 
 
 def make_shap_explanation(model: Any, x: pd.DataFrame):
     modules = optional_imports()
     shap = modules.get("shap")
     if shap is None:
-        raise RuntimeError("当前环境缺少 shap，无法生成 SHAP 图。")
+        raise RuntimeError("shap is not available in the current environment, so the SHAP plot cannot be generated.")
 
     background = load_background()
     if background is not None:
@@ -396,13 +426,13 @@ def render_shap(model: Any, x: pd.DataFrame) -> None:
     shap = modules.get("shap")
     plt = modules.get("plt")
     if shap is None or plt is None:
-        st.warning("当前环境缺少 shap 或 matplotlib，模型概率可计算，但不能显示 SHAP 图。")
+        st.warning("shap or matplotlib is not available. The probability can be calculated, but SHAP plots cannot be displayed.")
         return
 
     try:
         explanation = make_shap_explanation(model, x)
     except Exception as exc:
-        st.warning(f"SHAP 图生成失败：{exc}")
+        st.warning(f"SHAP plot generation failed: {exc}")
         return
 
     tab1, tab2 = st.tabs(["Waterfall plot", "Force plot"])
@@ -421,39 +451,39 @@ def render_shap(model: Any, x: pd.DataFrame) -> None:
             )
             components.html(f"{shap.getjs()}{force.html()}", height=230, scrolling=True)
         except Exception as exc:
-            st.info(f"force plot 暂时无法渲染，waterfall plot 已提供同一患者层面的 SHAP 解释。错误：{exc}")
+            st.info(f"The force plot could not be rendered. The waterfall plot provides the same patient-level SHAP explanation. Error: {exc}")
 
 
 def render_input_form() -> tuple[dict[str, float], float, float, bool]:
-    st.subheader("患者术前指标")
+    st.subheader("Preoperative Variables")
     left, right = st.columns(2)
     values: dict[str, float] = {}
     for index, spec in enumerate(FEATURES):
         container = left if index % 2 == 0 else right
         with container:
             values[spec.key] = st.number_input(
-                f"{spec.label} ({spec.zh})",
+                spec.label,
                 min_value=float(spec.min_value),
                 max_value=float(spec.max_value),
                 value=float(spec.default),
                 step=float(spec.step),
-                help=f"{spec.help_text} 单位：{spec.unit}",
+                help=f"{spec.help_text} Unit: {spec.unit}",
                 format="%.2f" if spec.step < 1 else "%.0f",
             )
-            st.caption(f"单位：{spec.unit}")
+            st.caption(f"Unit: {spec.unit}")
 
     st.divider()
-    st.subheader("风险分层阈值")
+    st.subheader("Risk Stratification Thresholds")
     c1, c2, c3 = st.columns([1, 1, 1.2])
     with c1:
-        medium = st.slider("中危起点", 1, 80, 10, 1) / 100
+        medium = st.slider("Intermediate-risk threshold", 1, 80, 10, 1) / 100
     with c2:
-        high = st.slider("高危起点", 2, 95, 30, 1) / 100
+        high = st.slider("High-risk threshold", 2, 95, 30, 1) / 100
     with c3:
-        st.caption("阈值只影响低/中/高风险标签，不改变模型预测概率。")
+        st.caption("Thresholds affect only the low/intermediate/high risk label and do not change the predicted probability.")
 
     if medium >= high:
-        st.error("风险阈值需满足：中危起点 < 高危起点。")
+        st.error("Risk thresholds must satisfy: intermediate-risk threshold < high-risk threshold.")
         can_predict = False
     else:
         can_predict = True
@@ -465,9 +495,10 @@ def model_status_box(model: Any | None, source: str | None) -> None:
         st.markdown(
             """
             <div class="status-bad">
-            未检测到最终 GBM 模型。请把模型放到 <code>models/final_gbm_model.json.gz</code>、
-            <code>models/final_gbm_model.joblib</code> 或 <code>models/final_gbm_model.pkl</code>，
-            然后重新运行。
+            Final GBM model was not detected. Place the model at
+            <code>models/final_gbm_model.json.gz</code>,
+            <code>models/final_gbm_model.joblib</code>, or
+            <code>models/final_gbm_model.pkl</code>, then rerun the app.
             </div>
             """,
             unsafe_allow_html=True,
@@ -481,7 +512,7 @@ def model_status_box(model: Any | None, source: str | None) -> None:
     st.markdown(
         f"""
         <div class="status-ok">
-        已加载模型：<code>{source or "uploaded model"}</code>{details}
+        Loaded model: <code>{source or "uploaded model"}</code>{details}
         </div>
         """,
         unsafe_allow_html=True,
@@ -489,27 +520,27 @@ def model_status_box(model: Any | None, source: str | None) -> None:
 
 
 def sidebar_model_upload() -> tuple[Any | None, str | None]:
-    st.sidebar.header("模型接入")
-    st.sidebar.caption("正式部署时建议把模型文件放入 models/ 目录。临时测试可在这里上传。")
-    uploaded = st.sidebar.file_uploader("上传可信模型文件", type=["gz", "json", "joblib", "pkl", "pickle"])
+    st.sidebar.header("Model Input")
+    st.sidebar.caption("For deployment, place the model file in the models/ directory. You may upload a trusted model here for temporary testing.")
+    uploaded = st.sidebar.file_uploader("Upload a trusted model file", type=["gz", "json", "joblib", "pkl", "pickle"])
     if uploaded is None:
         return load_model_from_disk()
     try:
         return load_model_bytes(uploaded.getvalue(), uploaded.name), uploaded.name
     except Exception as exc:
-        st.sidebar.error(f"模型读取失败：{exc}")
+        st.sidebar.error(f"Model loading failed: {exc}")
         return None, None
 
 
 def render_model_contract() -> None:
-    with st.expander("模型文件要求", expanded=False):
+    with st.expander("Model File Requirements", expanded=False):
         st.markdown(
             """
-            - 模型应为二分类 GBM/树模型，并支持 `predict_proba(X)`。
-            - R `gbm` 模型可导出为 `models/final_gbm_model.json.gz` 后部署。
-            - 输入变量建议使用这些列名：`age`, `gnri`, `be`, `wbc`, `rbc`, `alt`, `urea`。
-            - 若要显示稳定的 SHAP 图，建议提供训练集背景数据：`data/background.csv`，列名与模型一致。
-            - 当前部署使用从 `model.rds` 重建并导出的 R GBM JSON 模型，不上传原始病例数据。
+            - The model should be a binary GBM/tree model and support `predict_proba(X)`.
+            - R `gbm` models can be exported as `models/final_gbm_model.json.gz` for deployment.
+            - Recommended input column names: `age`, `gnri`, `be`, `wbc`, `rbc`, `alt`, `urea`.
+            - For stable SHAP plots, provide background data at `data/background.csv` with the same columns as the model.
+            - This deployment uses the R GBM JSON model reconstructed and exported from `model.rds`; raw patient-level data are not uploaded.
             """
         )
 
@@ -527,7 +558,7 @@ def main() -> None:
         <div class="hero">
           <div class="eyebrow">Gastrointestinal Cancer Surgery</div>
           <h1>Delayed Emergence GBM Risk Calculator</h1>
-          <p>基于术前 7 变量的延迟苏醒风险预测与 SHAP 个体化解释工具。</p>
+          <p>A seven-variable preoperative risk prediction tool for delayed emergence with individualized SHAP explanations.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -541,24 +572,25 @@ def main() -> None:
         values, medium, high, can_predict = render_input_form()
 
     with output_col:
-        st.subheader("预测结果")
+        st.subheader("Prediction Results")
         st.markdown(
             """
             <div class="status-warn">
-            当前工具仅用于论文模型展示和研究验证。正式临床使用前需要前瞻性外部验证和本地校准。
+            This tool is intended for manuscript model presentation and research validation only.
+            Prospective external validation and local calibration are required before clinical use.
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-        predict_clicked = st.button("计算风险并生成 SHAP 图", type="primary", disabled=not can_predict)
+        predict_clicked = st.button("Calculate Risk and Generate SHAP Plot", type="primary", disabled=not can_predict)
         if not predict_clicked:
-            st.info("请确认输入值后点击计算。")
+            st.info("Confirm the input values and click Calculate.")
             render_model_contract()
             return
 
         if model is None:
-            st.error("尚未接入最终 GBM 模型，不能输出真实预测概率。")
+            st.error("The final GBM model has not been loaded, so a real prediction probability cannot be produced.")
             render_model_contract()
             return
 
@@ -566,7 +598,7 @@ def main() -> None:
             x = make_feature_frame(values, model)
             probability = predict_probability(model, x)
         except Exception as exc:
-            st.error(f"预测失败：{exc}")
+            st.error(f"Prediction failed: {exc}")
             render_model_contract()
             return
 
@@ -580,7 +612,7 @@ def main() -> None:
                 {probability * 100:.1f}%
               </div>
               <div style="font-size: 1.2rem; font-weight: 760; color: {color};">{label}</div>
-              <div class="small-muted">中危 ≥ {medium * 100:.0f}%，高危 ≥ {high * 100:.0f}%</div>
+              <div class="small-muted">Intermediate risk >= {medium * 100:.0f}%, high risk >= {high * 100:.0f}%</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -591,7 +623,7 @@ def main() -> None:
                 [
                     {
                         "Variable": spec.label,
-                        "中文": spec.zh,
+                        "Description": spec.description,
                         "Value": values[spec.key],
                         "Unit": spec.unit,
                     }
@@ -602,8 +634,8 @@ def main() -> None:
             hide_index=True,
         )
 
-        st.subheader("个体化 SHAP 解释")
-        with st.spinner("正在生成 SHAP 个体化解释..."):
+        st.subheader("Individualized SHAP Explanation")
+        with st.spinner("Generating individualized SHAP explanation..."):
             render_shap(model, x)
 
 
