@@ -163,12 +163,7 @@ class RJsonGBM:
         return self.predict_proba(x)[:, 1]
 
     def metadata_summary(self) -> str:
-        n = self.training_summary.get("n")
-        positive = self.training_summary.get("outcome_positive")
-        negative = self.training_summary.get("outcome_negative")
-        if n is None:
-            return self.source
-        return f"{self.source}; training n={n}, DL1=1: {positive}, DL1=0: {negative}"
+        return self.source
 
 
 def page_style() -> None:
